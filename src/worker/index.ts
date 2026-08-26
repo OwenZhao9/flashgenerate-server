@@ -38,6 +38,14 @@ function pollDelayMs(attempts: number): number {
 const STUCK_AFTER_MS = 60 * 60 * 1000
 /** 结果转存失败最多再试几轮。生成已经花过钱了，值得多试几次。 */
 const ARCHIVE_RETRIES = 5
+/** 一般可重试错误的次数上限 */
+const RETRIES = 3
+/**
+ * 限流的次数上限。给得很宽，因为限流只是要等一个窗口，等到了就能过。
+ * 配合上面 60 秒的退避上限，最坏情况也就是排队半小时，
+ * 而 STUCK_AFTER_MS 那道闸会兜住真正卡死的任务。
+ */
+const RATE_LIMIT_RETRIES = 40
 
 let running = false
 let timer: NodeJS.Timeout | null = null
@@ -350,18 +358,27 @@ async function failTask(
   const code = pe?.code ?? 'unknown'
   const message = err instanceof Error ? err.message : String(err)
 
-  // 可重试的错误放回队列退避重试，重试够了才真判失败
+  // 可重试的错误放回队列退避重试，重试够了才真判失败。
+  //
+  // 限流单独放宽：「请求太频繁」不是任务本身有问题，是我们发得太快，
+  // 等一会儿一定能发出去。按三次就判死的话，只要并发配得比平台实际允许的高，
+  // 排在后面的任务就会被一路退避到死——而并发数是管理后台里能随手改的，
+  // 配高一点的代价不该是任务莫名其妙失败。
   if (opts.allowRetry && pe?.retryable) {
     const row = await one<{ attempts: number }>(pool, `SELECT attempts FROM tasks WHERE id = $1`, [taskId])
     const attempts = Number(row?.attempts ?? 0) + 1
-    if (attempts <= 3) {
+    const ceiling = code === 'rate_limited' ? RATE_LIMIT_RETRIES : RETRIES
+
+    if (attempts <= ceiling) {
+      // 退避上限 60 秒。限流要等的是一个窗口，不是指数级的时间。
+      const backoff = Math.min(60, 2 ** Math.min(attempts, 6) * 2)
       await query(
         pool,
         `UPDATE tasks SET attempts = $2, error_code = $3, error_message = $4,
                           next_run_at = now() + ($5 || ' seconds')::interval,
                           lease_owner = NULL, lease_until = NULL, updated_at = now()
           WHERE id = $1`,
-        [taskId, attempts, code, message.slice(0, 500), String(2 ** attempts * 2)],
+        [taskId, attempts, code, message.slice(0, 500), String(backoff)],
       )
       return
     }
