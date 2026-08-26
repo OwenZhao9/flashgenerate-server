@@ -1,0 +1,12 @@
+node_modules/
+dist/
+
+# 凭据绝不进仓库。数据库地址、对象存储密钥、会话密钥都在这里面，
+# 部署时由 Render 的环境变量注入，仓库里只留 .env.example 作说明。
+.env
+.env.*
+!.env.example
+
+# 本地测试用的东西
+*.log
+.DS_Store
