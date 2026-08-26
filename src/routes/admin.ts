@@ -170,6 +170,9 @@ export function adminRoutes(app: FastifyInstance): void {
         .object({
           disabled: z.boolean().optional(),
           name: z.string().max(120).optional(),
+          // 换登录邮箱。先建占位账号、等客户给了真实邮箱再换过来，
+          // 靠的就是这一条——租户带着历史数据删不掉，只能原地改。
+          email: z.string().email().optional(),
           newPassword: z.string().min(8).optional(),
         })
         .parse(req.body)
@@ -206,6 +209,13 @@ export function adminRoutes(app: FastifyInstance): void {
         }
         if (body.name !== undefined) {
           await query(client, `UPDATE accounts SET name = $2, updated_at = now() WHERE id = $1`, [id, body.name])
+        }
+        if (body.email !== undefined) {
+          const dup = await one(client, `SELECT id FROM accounts WHERE email = $1 AND id <> $2`, [body.email, id])
+          if (dup) throw new HttpError(409, 'email_taken', '这个邮箱已经被占用')
+          await query(client, `UPDATE accounts SET email = $2, updated_at = now() WHERE id = $1`, [id, body.email])
+          // 换了登录邮箱等于换了身份，手上的会话一律作废，重新登录
+          await revokeAllSessions(client, id)
         }
         if (body.newPassword) {
           const hash = await hashPassword(body.newPassword)
@@ -258,6 +268,28 @@ export function adminRoutes(app: FastifyInstance): void {
     } catch (err) {
       if (err instanceof z.ZodError) {
         return sendError(reply, new HttpError(400, 'bad_request', err.errors[0]?.message ?? '参数不正确'))
+      }
+      sendError(reply, err)
+    }
+  })
+
+  /** 给客户改名。开户时可能只有个代称，等确认了正式名称再改过来。 */
+  app.patch('/api/admin/tenants/:id', async (req, reply) => {
+    try {
+      requireAdmin(req)
+      const { id } = req.params as { id: string }
+      const body = z.object({ name: z.string().min(1).max(120) }).parse(req.body)
+
+      const rows = await query(
+        pool,
+        `UPDATE tenants SET name = $2, updated_at = now() WHERE id = $1 RETURNING id, name, kind`,
+        [id, body.name],
+      )
+      if (!rows.length) throw new HttpError(404, 'not_found', '客户不存在')
+      reply.send({ tenant: rows[0] })
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return sendError(reply, new HttpError(400, 'bad_request', '名称不正确'))
       }
       sendError(reply, err)
     }
