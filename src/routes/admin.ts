@@ -554,9 +554,15 @@ export function adminRoutes(app: FastifyInstance): void {
         pool,
         `SELECT t.id, t.provider_task_id, t.capability::text, t.model_code, t.status::text,
                 t.params, t.created_at, ten.name AS tenant_name,
-                (SELECT sum(points) FROM quota_ledger l WHERE l.task_id = t.id AND l.op='settle') AS settled_points,
-                (SELECT l.provider_amount FROM quota_ledger l WHERE l.task_id = t.id AND l.op='settle' LIMIT 1) AS recorded_cost,
-                (SELECT l.note FROM quota_ledger l WHERE l.task_id = t.id AND l.op='settle' LIMIT 1) AS settle_note
+                -- 结算加补差才是最终扣的数。只看结算那一行会漏掉补差，
+                -- 显示出来永远有差额，看的人以为对不上。
+                (SELECT COALESCE(sum(points), 0) FROM quota_ledger l
+                  WHERE l.task_id = t.id AND l.op IN ('settle','reconcile')) AS recorded_cost,
+                (SELECT count(*) FROM quota_ledger l
+                  WHERE l.task_id = t.id AND l.op = 'reconcile') > 0 AS reconciled,
+                (SELECT l.note FROM quota_ledger l
+                  WHERE l.task_id = t.id AND l.op IN ('settle','reconcile')
+                  ORDER BY l.id DESC LIMIT 1) AS settle_note
            FROM tasks t JOIN tenants ten ON ten.id = t.tenant_id
           WHERE t.created_at > now() - ($1 || ' hours')::interval
           ORDER BY t.created_at DESC`,
