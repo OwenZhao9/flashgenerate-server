@@ -289,10 +289,44 @@ async function finishSuccess(task: Record<string, unknown>, result: PollResult):
 
   try {
     const assetIds = await archiveOutputs(task, result)
+    const { provider, ctx } = await loadProvider(providerId, { tenantId, taskId: id })
 
     const dims = priceDimensions(capability, (task.params ?? {}) as Record<string, unknown>)
     const rule = await findRule(pool, providerId, capability, modelCode, dims.variant, dims.resolution)
-    const charge = rule ? priceOf(rule, result.usage) : null
+    const estimate = rule ? priceOf(rule, result.usage) : null
+
+    // 结算以平台账单为准，不用价目表估。
+    //
+    // 公开价目表是挂牌价，跟这个账号的实际扣费对不上——实测四笔里两笔不符，
+    // seedream 5.0 Pro 标 8 实扣 20，seedance 4 秒 720P 算 120 实扣 180。
+    // 按挂牌价结算的话，差额悄悄由承担生成费用的一方吃掉，月底才发现。
+    //
+    // 平台出账有延迟，查不到就先按估算记，并标出来等对账补齐。
+    let charge = estimate
+    let settleNote: string | undefined
+    const providerTaskId = task.provider_task_id ? String(task.provider_task_id) : ''
+
+    if (provider.actualCost && providerTaskId) {
+      try {
+        const actual = await provider.actualCost(ctx, providerTaskId, new Date())
+        if (actual) {
+          charge = {
+            // 1 点 = 1 蝉豆，所以实际扣费直接就是点数
+            points: actual.amount,
+            currency: actual.currency,
+            providerAmount: actual.amount,
+          }
+          if (estimate && Math.abs(estimate.points - actual.amount) > 0.01) {
+            settleNote = `按账单结算 ${actual.amount}，估算为 ${estimate.points}`
+          }
+        } else {
+          settleNote = '平台尚未出账，暂按估算结算，待对账修正'
+        }
+      } catch (err) {
+        // 查账单失败不该让任务失败，退回估算
+        settleNote = `账单查询失败，暂按估算结算：${err instanceof Error ? err.message : String(err)}`
+      }
+    }
 
     await tx(async (client) => {
       if (charge) {
@@ -303,6 +337,7 @@ async function finishSuccess(task: Record<string, unknown>, result: PollResult):
           providerId,
           currency: charge.currency,
           providerAmount: charge.providerAmount,
+          note: settleNote,
         })
       } else {
         // 没配换算规则，退掉预扣而不是硬扣一个猜的数

@@ -56,16 +56,16 @@ export const CHANJING_PRICE_ALIASES: PriceAlias[] = [
     capability: 'image',
     item: 'text_to_image',
     catalogModel: 'GPT-Image2-medium',
-    confirmed: false,
-    note: '按名字推断：我们叫 image2_medium，目录里只有 GPT-Image2-medium 带 Image2。价差很大（40/60 蝉豆），务必核实',
+    confirmed: true,
+    note: '实测坐实：提交一张 2048 的图，余额掉 40 蝉豆，与目录里 GPT-Image2-medium 的 2K 价一致。另外这个模型只收 2048/4096，传 1024 会被拒',
   },
   {
     modelCode: 'gemini-3-pro-image',
     capability: 'image',
     item: 'text_to_image',
     catalogModel: 'NanoBanana Pro',
-    confirmed: false,
-    note: 'NanoBanana 是 Google 图像模型的代号，目录里没有 gemini 字样的条目。30/60 蝉豆，务必核实',
+    confirmed: true,
+    note: '实测坐实：提交一张 2048 的图，余额掉 30 蝉豆，与目录里 NanoBanana Pro 的 2K 价一致',
   },
 
   // 视频。目录里 item_code 是 video_generation。

@@ -14,6 +14,7 @@ import {
   type PollResult,
   type Provider,
   type ProviderContext,
+  type ActualCost,
   type ProviderModel,
   type SubmitInput,
   type SubmitResult,
@@ -410,6 +411,41 @@ async function balance(ctx: ProviderContext): Promise<BalanceEntry[]> {
   return out
 }
 
+/**
+ * 查一笔任务的实际扣费。
+ *
+ * 平台的消耗明细按任务号记账，这是唯一权威的数字。
+ * 时间参数用北京时间，传 UTC 查不到（实测空列表）。
+ * 出账有延迟，查不到时返回 null，由调用方决定是等还是先按估算记。
+ */
+async function actualCost(
+  ctx: ProviderContext,
+  providerTaskId: string,
+  at: Date,
+): Promise<ActualCost | null> {
+  const fmt = (d: Date): string => {
+    // 平台按北京时间过滤，这里把 UTC 时刻换算成北京时间的字面量
+    const bj = new Date(d.getTime() + 8 * 3600_000)
+    return bj.toISOString().replace('T', ' ').slice(0, 19)
+  }
+
+  // 往前后各放宽一小时，避免边界和时钟偏差把这一笔漏掉
+  const res = await post<{ list?: Array<Record<string, unknown>> }>(ctx, ID, '/consume_detail', {
+    start_time: fmt(new Date(at.getTime() - 3600_000)),
+    end_time: fmt(new Date(at.getTime() + 3600_000)),
+    page: 1,
+    page_size: 200,
+  })
+
+  const hit = (res?.list ?? []).find((x) => String(x.task_id ?? '') === providerTaskId)
+  if (!hit) return null
+
+  const amount = num(hit.bean_amount)
+  if (amount === undefined) return null
+
+  return { currency: 'bean', amount, note: str(hit.consume_type) }
+}
+
 async function models(): Promise<ProviderModel[]> {
   return CHANJING_MODELS
 }
@@ -426,6 +462,7 @@ export const chanjing: Provider = {
   poll: (ctx, capability, id) => pollFor(ctx, capability, id),
   upload,
   balance,
+  actualCost,
   models,
 }
 

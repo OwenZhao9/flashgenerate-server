@@ -128,6 +128,8 @@ export async function settle(
     providerId?: string
     currency?: string
     providerAmount?: number
+    /** 结算依据的说明，例如按账单结算还是按估算 */
+    note?: string
   },
 ): Promise<void> {
   const points = round4(args.points)

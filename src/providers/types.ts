@@ -159,6 +159,14 @@ export interface UploadResult {
   raw?: unknown
 }
 
+/** 平台账单上这一笔的实际扣费 */
+export interface ActualCost {
+  currency: string
+  amount: number
+  /** 平台给的消耗类型描述，记进账本便于核对 */
+  note?: string
+}
+
 export interface BalanceEntry {
   /** 供应商自家的货币名，例如 bean、magic */
   currency: string
@@ -229,6 +237,19 @@ export interface Provider {
 
   /** 拉取余额，用于定时对账 */
   balance(ctx: ProviderContext): Promise<BalanceEntry[]>
+
+  /**
+   * 查一笔任务的实际扣费。
+   *
+   * 有这个才能按实际结算而不是按价目表估。平台的公开价目表是挂牌价，
+   * 实测跟账单对不上：同一个 seedream 5.0 Pro 目录标 8、实际扣 20；
+   * seedance 4 秒 720P 按目录算 120、实际扣 180。四笔里只对上两笔。
+   * 挂牌价拿来做提交时的预扣够用，结算必须以账单为准。
+   *
+   * 返回 null 表示平台还没出账，调用方退回按估算记并标待对账。
+   * 不实现这个方法的供应商一律按估算结算。
+   */
+  actualCost?(ctx: ProviderContext, providerTaskId: string, at: Date): Promise<ActualCost | null>
 
   /** 可用模型 */
   models(ctx: ProviderContext): Promise<ProviderModel[]>
