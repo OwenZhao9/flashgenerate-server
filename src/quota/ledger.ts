@@ -144,11 +144,12 @@ export async function settle(
   const inserted = await query<{ id: number }>(
     client,
     `INSERT INTO quota_ledger
-       (tenant_id, task_id, op, points, provider_id, provider_currency, provider_amount)
-     VALUES ($1, $2, 'settle', $3, $4, $5, $6)
+       (tenant_id, task_id, op, points, provider_id, provider_currency, provider_amount, note)
+     VALUES ($1, $2, 'settle', $3, $4, $5, $6, $7)
      ${ON_CONFLICT}
      RETURNING id`,
-    [args.tenantId, args.taskId, points, args.providerId ?? null, args.currency ?? null, args.providerAmount ?? null],
+    [args.tenantId, args.taskId, points, args.providerId ?? null, args.currency ?? null,
+     args.providerAmount ?? null, args.note ?? null],
   )
   if (!inserted.length) return
 
@@ -204,6 +205,70 @@ export async function refund(
       WHERE tenant_id = $1`,
     [args.tenantId, held],
   )
+}
+
+/**
+ * 账单补差。
+ *
+ * 平台出账有延迟，结算时拿不到真实扣费，只能先按估算记。
+ * 这里在账单出来之后把差额补上，让账本跟平台账单对得齐。
+ *
+ * 差额记成单独一笔而不是改写原来那条结算，理由跟账本只追加不修改一样：
+ * 改写会让「当时按什么结的」这个信息消失，出了争议查不回去。
+ *
+ * (task_id, op) 上有唯一约束，所以同一个任务只会补一次。
+ */
+export async function reconcileCost(
+  client: pg.PoolClient,
+  args: {
+    tenantId: string
+    taskId: string
+    /** 平台账单上的实际扣费 */
+    actualAmount: number
+    providerId?: string
+    currency?: string
+    note?: string
+  },
+): Promise<number> {
+  const settled = await one<{ points: string }>(
+    client,
+    `SELECT points FROM quota_ledger WHERE task_id = $1 AND op = 'settle'`,
+    [args.taskId],
+  )
+  // 没结算过的不补差——失败退还过的任务不该再扣钱
+  if (!settled) return 0
+
+  const diff = round4(args.actualAmount - Number(settled.points))
+  if (Math.abs(diff) < 0.0001) return 0
+
+  const inserted = await query<{ id: number }>(
+    client,
+    `INSERT INTO quota_ledger
+       (tenant_id, task_id, op, points, provider_id, provider_currency, provider_amount, note)
+     VALUES ($1, $2, 'reconcile', $3, $4, $5, $6, $7)
+     ${ON_CONFLICT}
+     RETURNING id`,
+    [
+      args.tenantId,
+      args.taskId,
+      diff,
+      args.providerId ?? null,
+      args.currency ?? null,
+      args.actualAmount,
+      args.note ?? `按平台账单补差：结算 ${Number(settled.points)}，账单 ${args.actualAmount}`,
+    ],
+  )
+  if (!inserted.length) return 0
+
+  await query(
+    client,
+    `UPDATE quota_accounts
+        SET used_points = GREATEST(0, used_points + $2), updated_at = now()
+      WHERE tenant_id = $1`,
+    [args.tenantId, diff],
+  )
+
+  return diff
 }
 
 /**

@@ -17,6 +17,7 @@ import { adminRoutes } from './routes/admin.ts'
 import { startWorker, stopWorker } from './worker/index.ts'
 import { startReconcile, stopReconcile } from './worker/reconcile.ts'
 import { startPriceSync, stopPriceSync } from './worker/prices.ts'
+import { startSettleUp, stopSettleUp } from './worker/settleUp.ts'
 import { purgeExpiredSessions } from './auth/session.ts'
 import './providers/chanjing/index.ts'
 
@@ -67,6 +68,7 @@ async function main(): Promise<void> {
   startWorker()
   startReconcile()
   startPriceSync()
+  startSettleUp()
 
   // 每天清一次过期会话
   setInterval(() => void purgeExpiredSessions().catch(() => {}), 24 * 60 * 60 * 1000)
@@ -80,6 +82,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     stopWorker()
     stopReconcile()
     stopPriceSync()
+    stopSettleUp()
     app
       .close()
       .then(closePool)

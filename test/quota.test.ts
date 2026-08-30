@@ -226,6 +226,53 @@ await it('重复写账本之后，同一个事务里还能继续写别的表', a
   assert.equal(b.available, 100, '只该退一次')
 })
 
+await it('账单补差：结算低了会补上，账本和余额都跟着动', async () => {
+  const { reconcileCost } = await import('../src/quota/ledger.ts')
+  const tenant = await freshTenant()
+  const admin = (await one<{id:string}>(pool, `SELECT id FROM accounts WHERE role='admin' LIMIT 1`))!.id
+  await adjust({ tenantId: tenant, points: 100, actorAccountId: admin })
+  const task = await freshTask(tenant)
+
+  await tx((c) => hold(c, { tenantId: tenant, taskId: task, points: 8 }))
+  await tx((c) => settle(c, { tenantId: tenant, taskId: task, points: 8 }))
+  // 平台账单出来是 20
+  const diff = await tx((c) => reconcileCost(c, { tenantId: tenant, taskId: task, actualAmount: 20 }))
+
+  assert.equal(diff, 12, `补差应为 12，实际 ${diff}`)
+  const b = await balanceOf(pool, tenant)
+  assert.equal(b.used, 20, `已用应为 20，实际 ${b.used}`)
+  assert.equal(b.available, 80)
+})
+
+await it('同一笔只补一次差', async () => {
+  const { reconcileCost } = await import('../src/quota/ledger.ts')
+  const tenant = await freshTenant()
+  const admin = (await one<{id:string}>(pool, `SELECT id FROM accounts WHERE role='admin' LIMIT 1`))!.id
+  await adjust({ tenantId: tenant, points: 100, actorAccountId: admin })
+  const task = await freshTask(tenant)
+  await tx((c) => hold(c, { tenantId: tenant, taskId: task, points: 8 }))
+  await tx((c) => settle(c, { tenantId: tenant, taskId: task, points: 8 }))
+  for (let i = 0; i < 4; i++) {
+    await tx((c) => reconcileCost(c, { tenantId: tenant, taskId: task, actualAmount: 20 }))
+  }
+  const b = await balanceOf(pool, tenant)
+  assert.equal(b.used, 20, `重复补差了，已用变成 ${b.used}`)
+})
+
+await it('失败退还过的任务不补差', async () => {
+  const { reconcileCost } = await import('../src/quota/ledger.ts')
+  const tenant = await freshTenant()
+  const admin = (await one<{id:string}>(pool, `SELECT id FROM accounts WHERE role='admin' LIMIT 1`))!.id
+  await adjust({ tenantId: tenant, points: 100, actorAccountId: admin })
+  const task = await freshTask(tenant)
+  await tx((c) => hold(c, { tenantId: tenant, taskId: task, points: 8 }))
+  await tx((c) => refund(c, { tenantId: tenant, taskId: task }))
+  const diff = await tx((c) => reconcileCost(c, { tenantId: tenant, taskId: task, actualAmount: 20 }))
+  assert.equal(diff, 0, '没结算过的任务不该被补差扣钱')
+  const b = await balanceOf(pool, tenant)
+  assert.equal(b.available, 100)
+})
+
 console.log(`\n通过 ${pass}，失败 ${fail}`)
 await closePool()
 process.exit(fail ? 1 : 0)
