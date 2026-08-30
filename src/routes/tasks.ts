@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { one, pool, query, tx } from '../db/index.ts'
 import { HttpError, requireAuth, scopeOf, sendError } from '../auth/guard.ts'
 import { CAPABILITIES, providersFor, type Capability } from '../providers/types.ts'
-import { estimateUsage, findRule, priceOf } from '../quota/cost.ts'
+import { estimateUsage, findRule, priceDimensions, priceOf } from '../quota/cost.ts'
 import { balanceOf, hold, InsufficientQuota, refund } from '../quota/ledger.ts'
 import '../providers/chanjing/index.ts'
 
@@ -61,7 +61,10 @@ export function taskRoutes(app: FastifyInstance): void {
 
       const providerId = await pickProvider(body.capability, body.providerId)
 
-      const rule = await findRule(pool, providerId, body.capability, body.modelCode)
+      const dims = priceDimensions(body.capability, body.params)
+      const rule = await findRule(
+        pool, providerId, body.capability, body.modelCode, dims.variant, dims.resolution,
+      )
       const estimate = rule
         ? priceOf(rule, estimateUsage(body.capability, body.params))
         : { points: 0, currency: '', providerAmount: 0 }

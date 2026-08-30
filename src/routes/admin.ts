@@ -489,6 +489,43 @@ export function adminRoutes(app: FastifyInstance): void {
   // 计价规则
   // -------------------------------------------------------------------------
 
+  /**
+   * 价格目录的同步状态。
+   * unmapped 是同步时没能对上号的模型——这些没有价，任务会不扣费，
+   * 所以它不该只写在日志里，要摆在管理后台让人看见。
+   */
+  app.get('/api/admin/price-catalog', async (req, reply) => {
+    try {
+      requireAdmin(req)
+      const latest = await one<Record<string, unknown>>(
+        pool,
+        `SELECT version, updated_at, fetched_at, applied, unmapped
+           FROM price_catalogs WHERE provider_id = 'chanjing'
+          ORDER BY fetched_at DESC LIMIT 1`,
+      )
+      const history = await query(
+        pool,
+        `SELECT version, updated_at, fetched_at, applied
+           FROM price_catalogs WHERE provider_id = 'chanjing'
+          ORDER BY fetched_at DESC LIMIT 10`,
+      )
+      reply.send({ latest, history })
+    } catch (err) {
+      sendError(reply, err)
+    }
+  })
+
+  /** 手动触发一次价格同步 */
+  app.post('/api/admin/price-catalog/sync', async (req, reply) => {
+    try {
+      requireAdmin(req)
+      const { syncPrices } = await import('../worker/prices.ts')
+      reply.send(await syncPrices())
+    } catch (err) {
+      sendError(reply, err)
+    }
+  })
+
   app.get('/api/admin/cost-rules', async (req, reply) => {
     try {
       requireAdmin(req)

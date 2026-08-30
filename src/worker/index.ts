@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto'
 import type pg from 'pg'
 import { one, pool, query, tx } from '../db/index.ts'
 import { ProviderError, type Capability, type PollResult, type TaskStatus } from '../providers/types.ts'
-import { findRule, priceOf } from '../quota/cost.ts'
+import { findRule, priceDimensions, priceOf } from '../quota/cost.ts'
 import { refund, settle } from '../quota/ledger.ts'
 import { loadProvider } from './context.ts'
 import { archiveOutputs } from './archive.ts'
@@ -290,7 +290,8 @@ async function finishSuccess(task: Record<string, unknown>, result: PollResult):
   try {
     const assetIds = await archiveOutputs(task, result)
 
-    const rule = await findRule(pool, providerId, capability, modelCode)
+    const dims = priceDimensions(capability, (task.params ?? {}) as Record<string, unknown>)
+    const rule = await findRule(pool, providerId, capability, modelCode, dims.variant, dims.resolution)
     const charge = rule ? priceOf(rule, result.usage) : null
 
     await tx(async (client) => {

@@ -398,9 +398,14 @@ async function waitFileReady(ctx: ProviderContext, fileId: string): Promise<void
 async function balance(ctx: ProviderContext): Promise<BalanceEntry[]> {
   const d = await get<Record<string, unknown>>(ctx, ID, '/user_duration')
   const out: BalanceEntry[] = []
-  // resi_total_bean 是剩余总量，bean_day30 是近 30 天将过期的部分
+  // resi_total_bean 是剩余总量。
+  // bean_day30 是其中 30 天内会过期的部分——平台充值的蝉豆有效期 31 天，
+  // 到期未用清零，所以这个数要单独盯着，它是「该用掉还是该少充」的信号。
   if (num(d?.resi_total_bean) != null) {
     out.push({ currency: 'bean', amount: num(d.resi_total_bean)!, raw: d })
+  }
+  if (num(d?.bean_day30) != null) {
+    out.push({ currency: 'bean_expiring_30d', amount: num(d.bean_day30)!, raw: d })
   }
   return out
 }
