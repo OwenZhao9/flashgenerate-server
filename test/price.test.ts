@@ -89,6 +89,35 @@ await it('跟旧的占位价比，差距确实是数量级的', async () => {
     `真实价应是旧占位的 5 倍以上，实际 ${kling.charge.points} vs ${oldPrice}`)
 })
 
+await it('重复同步不会堆积重复规则', async () => {
+  const { syncPrices } = await import('../src/worker/prices.ts')
+  const { one } = await import('../src/db/index.ts')
+  const before = await one<{n:string}>(pool, `SELECT count(*)::text AS n FROM cost_rules WHERE source='catalog'`)
+  await syncPrices()
+  await syncPrices()
+  const after = await one<{n:string}>(pool, `SELECT count(*)::text AS n FROM cost_rules WHERE source='catalog'`)
+  assert.equal(after!.n, before!.n,
+    `同步两次后从 ${before!.n} 变成 ${after!.n} 条。effective_at 参与唯一键，写 now() 就会每轮插新行`)
+})
+
+await it('平台降价后按新价算，不会被旧的高价行盖住', async () => {
+  const { query, one } = await import('../src/db/index.ts')
+  // 造一条更早、更贵的历史行，模拟降价前的价格
+  await query(pool,
+    `INSERT INTO cost_rules (provider_id, capability, model_code, resolution, currency,
+                             provider_cost, points, per_unit, source, effective_at)
+     VALUES ('chanjing','video','tx_kling-v3-0-text2video','1080P','bean',999,999,true,'catalog',
+             '1999-01-01T00:00:00Z'::timestamptz)
+     ON CONFLICT DO NOTHING`)
+  try {
+    const d = priceDimensions('video', { clarity: 1080 })
+    const rule = await findRule(pool, 'chanjing', 'video', 'tx_kling-v3-0-text2video', d.variant, d.resolution)
+    assert.equal(rule!.points, 35, `应按现价 35，实际 ${rule!.points}——旧的高价行赢了`)
+  } finally {
+    await query(pool, `DELETE FROM cost_rules WHERE points = 999`)
+  }
+})
+
 console.log(`\n通过 ${pass}，失败 ${fail}`)
 await closePool()
 process.exit(fail ? 1 : 0)

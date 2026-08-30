@@ -531,8 +531,11 @@ export function adminRoutes(app: FastifyInstance): void {
       requireAdmin(req)
       const rows = await query(
         pool,
-        `SELECT id, provider_id, capability, model_code, currency, provider_cost, points, per_unit, effective_at
-           FROM cost_rules ORDER BY provider_id, capability, model_code NULLS FIRST`,
+        `SELECT id, provider_id, capability, model_code, variant, resolution,
+                currency, provider_cost, magic_cost, points, per_unit,
+                base_cost, base_points, source, catalog_version, effective_at
+           FROM cost_rules
+          ORDER BY provider_id, capability, model_code NULLS FIRST, resolution NULLS FIRST`,
       )
       reply.send({ rules: rows })
     } catch (err) {

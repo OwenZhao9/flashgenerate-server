@@ -71,8 +71,11 @@ export async function findRule(
       ORDER BY (model_code IS NOT NULL) DESC,
                (resolution IS NOT DISTINCT FROM $5) DESC,
                (variant IS NOT NULL) DESC,
-               points DESC,
-               effective_at DESC
+               -- 时间要排在价格前面。反过来的话，平台降价后旧的高价行会一直赢，
+               -- 价格变成只涨不跌。
+               effective_at DESC,
+               -- 同一批次里分辨率没匹配上时，才轮到「取最贵的那一档」这条兜底
+               points DESC
       LIMIT 1`,
     [providerId, capability, modelCode ?? null, variant ?? null, resolution ?? null],
   )

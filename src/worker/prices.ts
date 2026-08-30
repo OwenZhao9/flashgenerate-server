@@ -29,6 +29,19 @@ import { fetchPriceCatalog, num, type PriceItem, type PriceRow } from '../provid
 const PROVIDER = 'chanjing'
 const INTERVAL_MS = 6 * 60 * 60 * 1000
 
+/**
+ * 目录同步来的行统一用这个固定生效时间。
+ *
+ * effective_at 是唯一键的一部分，如果每次同步都写 now()，
+ * 同一个模型同一分辨率每轮都会插一条新行——六小时一次，一个月涨四千多行。
+ * 更糟的是查价时旧行还在参与竞争：平台一旦降价，旧的高价行会一直赢，
+ * 价格就只涨不跌了。
+ *
+ * 用固定值让它原地更新，只保留一行当前价。价格的历史版本留在
+ * price_catalogs 的快照里，追溯任何一笔消耗按的是哪一版都查得到。
+ */
+const CATALOG_EPOCH = `'2000-01-01T00:00:00Z'::timestamptz`
+
 let timer: NodeJS.Timeout | null = null
 
 export function startPriceSync(): void {
@@ -192,7 +205,7 @@ export async function syncPrices(): Promise<SyncResult> {
            (provider_id, capability, model_code, variant, resolution,
             currency, provider_cost, magic_cost, points, per_unit,
             base_cost, base_points, source, catalog_version, effective_at)
-         VALUES ($1,$2::capability,$3,$4,$5,'bean',$6,$7,$6,$8,$9,$9,'catalog',$10, date_trunc('second', now()))
+         VALUES ($1,$2::capability,$3,$4,$5,'bean',$6,$7,$6,$8,$9,$9,'catalog',$10, ${CATALOG_EPOCH})
          ON CONFLICT (provider_id, capability, COALESCE(model_code,''),
                       COALESCE(variant,''), COALESCE(resolution,''), effective_at)
          DO UPDATE SET
