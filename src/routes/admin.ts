@@ -515,6 +515,75 @@ export function adminRoutes(app: FastifyInstance): void {
     }
   })
 
+  /**
+   * 对账：把我方账本和平台账单摆在一起。
+   *
+   * 客户明确要过这个——系统里记的点数和平台实际扣的货币不可能实时一致，
+   * 但必须能对得上。这里按任务号左右并排，差异一眼看得到。
+   */
+  app.get('/api/admin/reconcile', async (req, reply) => {
+    try {
+      requireAdmin(req)
+      const q = req.query as Record<string, string | undefined>
+      const hours = Math.min(720, Math.max(1, Number(q.hours ?? 24)))
+
+      const { loadProvider } = await import('../worker/context.ts')
+      const { provider, ctx } = await loadProvider('chanjing')
+
+      // 平台按北京时间过滤，传 UTC 查不到
+      const fmt = (d: Date): string =>
+        new Date(d.getTime() + 8 * 3600_000).toISOString().replace('T', ' ').slice(0, 19)
+      const now = new Date()
+      const { post } = await import('../providers/chanjing/client.ts')
+      const bill = await post<{ list?: Array<Record<string, unknown>> }>(ctx, 'chanjing', '/consume_detail', {
+        start_time: fmt(new Date(now.getTime() - hours * 3600_000)),
+        end_time: fmt(new Date(now.getTime() + 3600_000)),
+        page: 1,
+        page_size: 200,
+      })
+      const byProviderTask = new Map<string, { amount: number; type: string; at: string }>()
+      for (const x of bill?.list ?? []) {
+        byProviderTask.set(String(x.task_id ?? ''), {
+          amount: Number(x.bean_amount ?? 0),
+          type: String(x.consume_type ?? ''),
+          at: String(x.consume_time ?? ''),
+        })
+      }
+
+      const tasks = await query<Record<string, unknown>>(
+        pool,
+        `SELECT t.id, t.provider_task_id, t.capability::text, t.model_code, t.status::text,
+                t.params, t.created_at, ten.name AS tenant_name,
+                (SELECT sum(points) FROM quota_ledger l WHERE l.task_id = t.id AND l.op='settle') AS settled_points,
+                (SELECT l.provider_amount FROM quota_ledger l WHERE l.task_id = t.id AND l.op='settle' LIMIT 1) AS recorded_cost,
+                (SELECT l.note FROM quota_ledger l WHERE l.task_id = t.id AND l.op='settle' LIMIT 1) AS settle_note
+           FROM tasks t JOIN tenants ten ON ten.id = t.tenant_id
+          WHERE t.created_at > now() - ($1 || ' hours')::interval
+          ORDER BY t.created_at DESC`,
+        [String(hours)],
+      )
+
+      const rows = tasks.map((t) => {
+        const actual = byProviderTask.get(String(t.provider_task_id ?? ''))
+        byProviderTask.delete(String(t.provider_task_id ?? ''))
+        return {
+          ...t,
+          platform_cost: actual?.amount ?? null,
+          platform_type: actual?.type ?? null,
+          // 我方记的和平台账单的差额。不为 0 就要看一眼。
+          diff: actual ? Number(t.recorded_cost ?? 0) - actual.amount : null,
+        }
+      })
+
+      // 平台账单里有、但我方没有对应任务的，多半是从别处（网页端、别的应用）产生的消耗
+      const orphans = [...byProviderTask.entries()].map(([id, v]) => ({ task_id: id, ...v }))
+
+      reply.send({ hours, rows, orphans })
+    } catch (err) {
+      sendError(reply, err)
+    }
+  })
+
   /** 手动触发一次价格同步 */
   app.post('/api/admin/price-catalog/sync', async (req, reply) => {
     try {
