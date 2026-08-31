@@ -30,7 +30,9 @@ interface AssetRow {
   meta: Record<string, unknown>
 }
 
-function isRef(v: unknown): v is { $asset: string } {
+type RefForm = 'url' | 'fileId'
+
+function isRef(v: unknown): v is { $asset: string; as?: RefForm } {
   return typeof v === 'object' && v !== null && typeof (v as { $asset?: unknown }).$asset === 'string'
 }
 
@@ -70,12 +72,21 @@ function refIsFresh(meta: Record<string, unknown>, want?: AssetPurpose): boolean
  * 把一个素材变成供应商能用的地址。
  * 过期或从来没传过就拿我方存的原件重传一次，并把新引用写回资产。
  */
+/**
+ * 把一个素材换成供应商能用的形式。
+ *
+ * form 决定给地址还是给文件 id。平台的参数两种都有：
+ * ref_img_url 之类要地址，video_file_id / audio_file_id / bg.file_id 要文件 id。
+ * 给错了平台会拿 URL 当文件 id 去查，找不到，回一句
+ * 「视频文件还未完成上传」——文件好好的，纯粹是形式给错了。
+ */
 async function resolveOne(
   provider: Provider,
   ctx: ProviderContext,
   tenantId: string,
   assetId: string,
   purpose?: AssetPurpose,
+  form: RefForm = 'url',
 ): Promise<string> {
   const asset = await one<AssetRow>(
     pool,
@@ -88,7 +99,10 @@ async function resolveOne(
   const meta = asset.meta ?? {}
   const ref = (meta.providerRef ?? {}) as Record<string, unknown>
 
-  if (refIsFresh(meta, purpose) && typeof ref.url === 'string') return ref.url
+  if (refIsFresh(meta, purpose)) {
+    const cached = form === 'fileId' ? ref.fileId : ref.url
+    if (typeof cached === 'string' && cached) return cached
+  }
 
   if (!asset.storage_key) {
     // 没有原件又没有可用引用，只能让用户重新上传
@@ -126,8 +140,14 @@ async function resolveOne(
     [assetId, JSON.stringify(nextRef)],
   )
 
-  if (!up.url) throw new ProviderError('provider_error', `素材「${asset.name}」重传后没有拿到可用地址`)
-  return up.url
+  const out = form === 'fileId' ? up.fileId : up.url
+  if (!out) {
+    throw new ProviderError(
+      'provider_error',
+      `素材「${asset.name}」重传后没有拿到${form === 'fileId' ? '文件 id' : '可用地址'}`,
+    )
+  }
+  return out
 }
 
 /**
@@ -145,9 +165,13 @@ export async function resolveRefs(
   const purpose = capability ? PURPOSE_BY_CAPABILITY[capability] : undefined
 
   if (isRef(params)) {
-    const id = params.$asset
-    if (!cache.has(id)) cache.set(id, resolveOne(provider, ctx, tenantId, id, purpose))
-    return cache.get(id)!
+    const form: RefForm = params.as === 'fileId' ? 'fileId' : 'url'
+    // 同一个素材可能既被要地址又被要文件 id，缓存键要带上形式
+    const key = `${params.$asset}:${form}`
+    if (!cache.has(key)) {
+      cache.set(key, resolveOne(provider, ctx, tenantId, params.$asset, purpose, form))
+    }
+    return cache.get(key)!
   }
 
   if (Array.isArray(params)) {
