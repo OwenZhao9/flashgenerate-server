@@ -13,7 +13,13 @@
  */
 
 import { one, pool, query } from '../db/index.ts'
-import { ProviderError, type Provider, type ProviderContext } from '../providers/types.ts'
+import {
+  ProviderError,
+  type AssetPurpose,
+  type Capability,
+  type Provider,
+  type ProviderContext,
+} from '../providers/types.ts'
 import { signedGetUrl } from '../storage/index.ts'
 
 interface AssetRow {
@@ -28,10 +34,33 @@ function isRef(v: unknown): v is { $asset: string } {
   return typeof v === 'object' && v !== null && typeof (v as { $asset?: unknown }).$asset === 'string'
 }
 
-/** 供应商那份引用是不是还能用 */
-function refIsFresh(meta: Record<string, unknown>): boolean {
+/**
+ * 各能力要的素材用途。
+ *
+ * 平台按用途分桶，桶不对下游就当文件不存在——一段视频当合成背景传过，
+ * 拿去做口型驱动会被拒，报的还是「视频文件还未完成上传」，很难往回查。
+ * 所以引用解析时要看这次的用途跟当初传的是不是一回事，不是就重传一遍。
+ */
+const PURPOSE_BY_CAPABILITY: Partial<Record<Capability, AssetPurpose>> = {
+  image: 'reference',
+  video: 'reference',
+  avatar: 'background',
+  person: 'avatar_training',
+  lipsync: 'lipsync_source',
+  voice_clone: 'audio',
+  tts: 'audio',
+}
+
+/** 供应商那份引用是不是还能用：没过期，而且用途对得上 */
+function refIsFresh(meta: Record<string, unknown>, want?: AssetPurpose): boolean {
   const ref = (meta.providerRef ?? {}) as Record<string, unknown>
   if (!ref.url && !ref.fileId) return false
+
+  // 用途不同就得重传，哪怕还没过期
+  if (want && ref.purpose && ref.purpose !== want) return false
+  // 老记录没存用途，无从判断，保险起见重传一次把它补上
+  if (want && !ref.purpose) return false
+
   const expires = typeof ref.expiresAt === 'string' ? Date.parse(ref.expiresAt) : NaN
   // 到期前一天就当它过期，别卡在边界上
   return Number.isFinite(expires) ? expires - Date.now() > 24 * 60 * 60 * 1000 : false
@@ -46,6 +75,7 @@ async function resolveOne(
   ctx: ProviderContext,
   tenantId: string,
   assetId: string,
+  purpose?: AssetPurpose,
 ): Promise<string> {
   const asset = await one<AssetRow>(
     pool,
@@ -58,7 +88,7 @@ async function resolveOne(
   const meta = asset.meta ?? {}
   const ref = (meta.providerRef ?? {}) as Record<string, unknown>
 
-  if (refIsFresh(meta) && typeof ref.url === 'string') return ref.url
+  if (refIsFresh(meta, purpose) && typeof ref.url === 'string') return ref.url
 
   if (!asset.storage_key) {
     // 没有原件又没有可用引用，只能让用户重新上传
@@ -79,9 +109,16 @@ async function resolveOne(
     mime: asset.mime_type ?? 'application/octet-stream',
     size: body.byteLength,
     body,
+    purpose,
   })
 
-  const nextRef = { ...ref, fileId: up.fileId, url: up.url, expiresAt: up.expiresAt?.toISOString() }
+  const nextRef = {
+    ...ref,
+    fileId: up.fileId,
+    url: up.url,
+    purpose: up.purpose ?? purpose,
+    expiresAt: up.expiresAt?.toISOString(),
+  }
   await query(
     pool,
     `UPDATE assets SET meta = jsonb_set(meta, '{providerRef}', $2::jsonb), updated_at = now()
@@ -102,22 +139,25 @@ export async function resolveRefs(
   ctx: ProviderContext,
   tenantId: string,
   params: unknown,
+  capability?: Capability,
   cache = new Map<string, Promise<string>>(),
 ): Promise<unknown> {
+  const purpose = capability ? PURPOSE_BY_CAPABILITY[capability] : undefined
+
   if (isRef(params)) {
     const id = params.$asset
-    if (!cache.has(id)) cache.set(id, resolveOne(provider, ctx, tenantId, id))
+    if (!cache.has(id)) cache.set(id, resolveOne(provider, ctx, tenantId, id, purpose))
     return cache.get(id)!
   }
 
   if (Array.isArray(params)) {
-    return Promise.all(params.map((v) => resolveRefs(provider, ctx, tenantId, v, cache)))
+    return Promise.all(params.map((v) => resolveRefs(provider, ctx, tenantId, v, capability, cache)))
   }
 
   if (params && typeof params === 'object') {
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(params as Record<string, unknown>)) {
-      out[k] = await resolveRefs(provider, ctx, tenantId, v, cache)
+      out[k] = await resolveRefs(provider, ctx, tenantId, v, capability, cache)
     }
     return out
   }

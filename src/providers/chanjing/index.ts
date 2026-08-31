@@ -15,6 +15,7 @@ import {
   type Provider,
   type ProviderContext,
   type ActualCost,
+  type AssetPurpose,
   type ProviderModel,
   type SubmitInput,
   type SubmitResult,
@@ -226,13 +227,25 @@ async function pollFor(
       })
       const st = num(d?.status)
       const done = st === 9
-      const url = str(d?.audio_url) ?? str(d?.url)
+      const err = str(d?.errMsg) ?? str(d?.errReason)
+
+      // 结果在 full 这一层里，不在顶层——顶层只有 id / status / text 这些。
+      // 按顶层去取会得到一个「成功但没有音频」的任务，用户点开是空的。
+      const full = (d?.full ?? {}) as Record<string, unknown>
+      const url = str(full.url) ?? str(full.watermark_url)
+      const duration = num(full.duration)
+
       return {
-        status: done ? (url ? 'success' : 'failed') : 'running',
-        progress: done ? 100 : 50,
-        outputs: done && url ? [{ kind: 'audio', url, mime: 'audio/mpeg' }] : [],
-        usage: num(d?.duration) ? ({ unit: 'second', amount: num(d.duration)! } as Usage) : undefined,
-        error: done && !url ? { code: 'provider_error', message: str(d?.msg) ?? '合成失败' } : undefined,
+        status: done ? (url ? 'success' : 'failed') : err ? 'failed' : 'running',
+        progress: done ? 100 : 45,
+        outputs: done && url ? [{ kind: 'audio', url, mime: 'audio/wav' }] : [],
+        usage: duration ? ({ unit: 'second', amount: duration } as Usage) : undefined,
+        error:
+          done && !url
+            ? { code: 'provider_error', message: err ?? '合成完成但没有拿到音频地址' }
+            : err
+              ? { code: 'provider_error', message: err }
+              : undefined,
         raw: d,
       }
     }
@@ -314,19 +327,42 @@ interface UploadUrlRsp {
   headers?: Record<string, string>
 }
 
-/** 按素材类型选平台的上传用途，它决定对方的格式校验和存储桶 */
-function serviceFor(mime: string): string {
-  if (mime.startsWith('audio/')) return 'lip_sync_audio'
-  if (mime.startsWith('video/')) return 'make_video_background'
-  return 'ai_creation'
+/**
+ * 用途 → 平台的 service。
+ *
+ * 这里只能按用途选，不能按文件类型猜。平台的 service 决定文件落哪个桶，
+ * 以及允许用在哪些下游能力上：同一段视频当合成背景传 make_video_background，
+ * 当口型驱动的源视频传 customised_person，用错了下游会报
+ * 「视频文件还未完成上传」——文件其实好好的，只是不在它要的那个桶里。
+ */
+const SERVICE_BY_PURPOSE: Record<AssetPurpose, string> = {
+  reference: 'ai_creation',
+  background: 'make_video_background',
+  avatar_training: 'customised_person',
+  lipsync_source: 'customised_person',
+  audio: 'lip_sync_audio',
+}
+
+/** 调用方没说用途时的兜底，只保证不报错，不保证下游能用 */
+function fallbackPurpose(mime: string): AssetPurpose {
+  if (mime.startsWith('audio/')) return 'audio'
+  if (mime.startsWith('video/')) return 'lipsync_source'
+  return 'reference'
 }
 
 async function upload(
   ctx: ProviderContext,
-  file: { name: string; mime: string; size: number; body: AsyncIterable<Uint8Array> | Buffer },
+  file: {
+    name: string
+    mime: string
+    size: number
+    body: AsyncIterable<Uint8Array> | Buffer
+    purpose?: AssetPurpose
+  },
 ): Promise<UploadResult> {
+  const purpose = file.purpose ?? fallbackPurpose(file.mime)
   const signed = await get<UploadUrlRsp>(ctx, ID, '/common/create_upload_url', {
-    service: serviceFor(file.mime),
+    service: SERVICE_BY_PURPOSE[purpose],
     name: file.name,
   })
 
@@ -359,6 +395,7 @@ async function upload(
   await waitFileReady(ctx, signed.file_id)
 
   return {
+    purpose,
     fileId: signed.file_id,
     url: signed.full_path,
     // 平台的上传素材保留 30 天，到点要标记失效并重传

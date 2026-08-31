@@ -179,7 +179,7 @@ async function submitOne(task: Record<string, unknown>): Promise<void> {
     // 参数里的素材引用在这里才展开成供应商能用的地址。
     // 放在提交这一步而不是入库时，是因为引用可能在排队期间过期，
     // 真正要用的那一刻再解析才不会拿到一个刚好失效的地址。
-    const resolved = (await resolveRefs(provider, ctx, tenantId, params)) as Record<string, unknown>
+    const resolved = (await resolveRefs(provider, ctx, tenantId, params, capability)) as Record<string, unknown>
 
     const res = await provider.submit(ctx, {
       capability,

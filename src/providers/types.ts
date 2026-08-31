@@ -149,7 +149,20 @@ export interface PollResult {
 }
 
 /** 上传素材的结果。各家引用素材的方式不同，能给 id 的给 id，只能给地址的给地址。 */
+/**
+ * 素材的用途。决定平台把它放进哪个桶，以及允许用在哪些下游能力上。
+ * 跟文件类型是两回事：同样是视频，做背景和做口型驱动的源，用途不同。
+ */
+export type AssetPurpose =
+  | 'reference'        // AI 创作的参考图
+  | 'background'       // 数字人合成的背景
+  | 'avatar_training'  // 定制数字人的训练素材
+  | 'lipsync_source'   // 口型驱动的源视频
+  | 'audio'            // 音频，用于口型驱动或声音克隆
+
 export interface UploadResult {
+  /** 这份文件按什么用途上传的。存进资产记录，下次用途不同时要重传。 */
+  purpose?: AssetPurpose
   /** 供应商侧的文件 id，后续提交任务时引用 */
   fileId?: string
   /** 供应商侧可访问的地址 */
@@ -229,10 +242,23 @@ export interface Provider {
   /** 取消任务。不支持的能力可以不实现。 */
   cancel?(ctx: ProviderContext, capability: Capability, providerTaskId: string): Promise<void>
 
-  /** 上传素材。签名在服务端完成，浏览器不接触凭据。 */
+  /**
+   * 上传素材。签名在服务端完成，浏览器不接触凭据。
+   *
+   * purpose 是「这个文件将来用来干什么」，不是文件类型。
+   * 平台按用途分桶，传错桶的文件在下游会被当成不存在——
+   * 一段视频当合成背景传和当口型驱动源传，落的桶不一样，
+   * 用错了报出来是「文件还未完成上传」，跟真实原因差很远。
+   */
   upload(
     ctx: ProviderContext,
-    file: { name: string; mime: string; size: number; body: AsyncIterable<Uint8Array> | Buffer },
+    file: {
+      name: string
+      mime: string
+      size: number
+      body: AsyncIterable<Uint8Array> | Buffer
+      purpose?: AssetPurpose
+    },
   ): Promise<UploadResult>
 
   /** 拉取余额，用于定时对账 */

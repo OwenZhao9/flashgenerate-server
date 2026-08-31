@@ -98,6 +98,11 @@ export function assetRoutes(app: FastifyInstance): void {
       const q = req.query as Record<string, string | undefined>
       const name = (q.name ?? 'upload').slice(0, 200)
       const type = z.enum(['image', 'video', 'audio']).parse(q.type ?? 'image')
+      // 用途决定平台把文件放进哪个桶。调用方知道就传，不传按类型给个兜底，
+      // 真正用到的时候引用解析会按当次能力再校一遍，不对就重传。
+      const purpose = q.purpose
+        ? z.enum(['reference', 'background', 'avatar_training', 'lipsync_source', 'audio']).parse(q.purpose)
+        : undefined
       const mime = req.headers['content-type']?.split(';')[0]?.trim() || 'application/octet-stream'
 
       const chunks: Buffer[] = []
@@ -119,8 +124,13 @@ export function assetRoutes(app: FastifyInstance): void {
       let providerRef: Record<string, unknown> = {}
       try {
         const { provider, ctx } = await loadProvider('chanjing', { tenantId: scope.tenantId })
-        const up = await provider.upload(ctx, { name, mime, size, body })
-        providerRef = { fileId: up.fileId, url: up.url, expiresAt: up.expiresAt }
+        const up = await provider.upload(ctx, { name, mime, size, body, purpose })
+        providerRef = {
+          fileId: up.fileId,
+          url: up.url,
+          purpose: up.purpose,
+          expiresAt: up.expiresAt,
+        }
       } catch (err) {
         req.log.warn({ err }, '素材传到供应商失败，仅存本地')
       }

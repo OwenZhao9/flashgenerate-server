@@ -124,6 +124,11 @@ export async function invalidateToken(providerId: string): Promise<void> {
  * 所以：平台把话说清楚了就以平台为准，别用我们的猜测盖掉它。
  */
 const MISSING_RESOURCE = /不存在|无权使用|没有找到|not found/i
+/**
+ * 「还未完成上传」是暂时的，等平台同步完就好，不该按不可恢复处理。
+ * 平台文档说上传后最长有一分钟的同步延迟。
+ */
+const NOT_READY = /还未完成上传|正在同步|请稍后重试/
 const BALANCE = /余额不足|额度不足|insufficient/i
 const AUDIT = /审核|违规|敏感|违禁/i
 
@@ -146,6 +151,9 @@ export function classify(code: number, msg?: string): ErrorCode {
       return 'bad_param'
     case 50000:
       // 官方释义是「系统内部错误」，实际是个兜底码
+      // 顺序有讲究：「文件还未完成上传」里也有「不存在」之外的字样，
+      // 但它是暂时的，要先于 missing_resource 判掉，否则会被当成不可恢复
+      if (NOT_READY.test(m)) return 'rate_limited'
       if (MISSING_RESOURCE.test(m)) return 'missing_resource'
       if (BALANCE.test(m)) return 'insufficient_balance'
       if (AUDIT.test(m)) return 'content_rejected'
