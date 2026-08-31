@@ -25,6 +25,13 @@ async function quote(capability: Capability, modelCode: string | null, params: R
   return { rule: rule!, charge: priceOf(rule!, usage) }
 }
 
+// 先同步一次价格。
+// 不这么做的话，在干净的库上第一次跑会全挂——计价规则要等到
+// 后面那个「重复同步」的用例才被写进去，前面的用例查不到规则。
+// 这种「跑第二遍才过」的测试比不写还糟。
+const { syncPrices } = await import('../src/worker/prices.ts')
+await syncPrices()
+
 console.log('计价')
 
 await it('视频按分辨率区分单价', async () => {
