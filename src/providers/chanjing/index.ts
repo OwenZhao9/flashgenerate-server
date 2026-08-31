@@ -71,6 +71,19 @@ const AIGC_PROGRESS: Record<string, number> = {
   Cancelled: 0,
 }
 
+/**
+ * 口型驱动的状态码跟视频合成不是同一套：这里 20 是成功，视频合成那边是 30。
+ * 拿视频合成那套去判，成功的任务会一直卡在「进行中」，进度显示 100% 却永远不结束。
+ * 也没有 queue_status 字段。
+ */
+function fromLipSyncStatus(status: number | undefined, progress: number): TaskStatus {
+  if (status != null && status >= 50) return 'failed'
+  if (status != null && status >= 40) return 'fatal'
+  if (status === 20) return 'success'
+  if (status === 10) return progress > 0 ? 'running' : 'pending'
+  return 'pending'
+}
+
 /** 定制数字人与声音克隆共用：1 处理中，2 成功，4 失败，5 系统错误。 */
 function fromTrainStatus(status?: number): TaskStatus {
   switch (status) {
@@ -295,14 +308,18 @@ async function pollFor(
       const d = await get<Record<string, unknown>>(ctx, ID, '/video_lip_sync/detail', {
         id: providerTaskId,
       })
-      // 口型驱动没有 queue_status，状态码与视频合成同一套
-      const status = fromVideoStatus(num(d?.status))
+      const status = fromLipSyncStatus(num(d?.status), clampProgress(d?.progress))
       const failed = status === 'failed' || status === 'fatal'
+
+      // duration 这里是毫秒，不是秒。实测一段 2.32 秒的成片返回 2320。
+      // 按秒计费的话，当成秒会算出一千倍的账。
+      const seconds = num(d?.duration) ? num(d.duration)! / 1000 : undefined
+
       return {
         status,
         progress: status === 'success' ? 100 : clampProgress(d?.progress),
         outputs: status === 'success' ? videoOutputs(d ?? {}) : [],
-        usage: num(d?.duration) ? ({ unit: 'second', amount: num(d.duration)! } as Usage) : undefined,
+        usage: seconds ? ({ unit: 'second', amount: seconds } as Usage) : undefined,
         error: failed
           ? { code: status === 'fatal' ? 'bad_param' : 'provider_error', message: str(d?.msg) ?? '驱动失败' }
           : undefined,

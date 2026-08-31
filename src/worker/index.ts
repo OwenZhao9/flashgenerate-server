@@ -189,8 +189,11 @@ async function submitOne(task: Record<string, unknown>): Promise<void> {
 
     await query(
       pool,
+      // 提交成功就把之前重试时留下的错误清掉。
+      // 不清的话，一个正在正常运行的任务卡片上会一直挂着上一次失败的话。
       `UPDATE tasks
           SET status = 'pending', provider_task_id = $2, trace_id = $3,
+              error_code = NULL, error_message = NULL,
               submitted_at = now(), next_run_at = now() + interval '3 seconds',
               attempts = 0, lease_owner = NULL, lease_until = NULL, updated_at = now()
         WHERE id = $1`,
