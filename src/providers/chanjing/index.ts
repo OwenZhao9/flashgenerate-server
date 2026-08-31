@@ -339,7 +339,11 @@ const SERVICE_BY_PURPOSE: Record<AssetPurpose, string> = {
   reference: 'ai_creation',
   background: 'make_video_background',
   avatar_training: 'customised_person',
-  lipsync_source: 'customised_person',
+  // 口型驱动的源视频有自己的桶 lip_sync_video。
+  // 这个值官方文档和 OpenAPI 描述文件里都没写（service 只声明成 string，没有枚举），
+  // 是逐个试出来的：传 customised_person 平台会一直回「视频文件还未完成上传」，
+  // 文件其实好好的，只是不在它要的那个桶里。
+  lipsync_source: 'lip_sync_video',
   audio: 'lip_sync_audio',
 }
 
