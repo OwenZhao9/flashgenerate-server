@@ -7,7 +7,7 @@
 
 import type { FastifyInstance } from 'fastify'
 import { pool, query } from '../db/index.ts'
-import { requireAuth, scopeOf, sendError } from '../auth/guard.ts'
+import { HttpError, requireAuth, scopeOf, sendError } from '../auth/guard.ts'
 import { CHANJING_MODEL_SPECS } from '../providers/chanjing/models.ts'
 import { loadProvider } from '../worker/context.ts'
 import { balanceOf } from '../quota/ledger.ts'
@@ -64,11 +64,12 @@ export function catalogRoutes(app: FastifyInstance): void {
   app.get('/api/catalog/my-voices', async (req, reply) => {
     try {
       const scope = scopeOf(req)
+      const q = req.query as Record<string, string | undefined>
       const { ctx } = await loadProvider('chanjing', { tenantId: scope.tenantId })
       const { post } = await import('../providers/chanjing/client.ts')
       const data = await post<unknown>(ctx, 'chanjing', '/list_customised_audio', {
-        page: 1,
-        page_size: 100,
+        page: Number(q.page ?? 1),
+        page_size: Number(q.pageSize ?? 100),
       })
       reply.send({ data })
     } catch (err) {
@@ -99,13 +100,77 @@ export function catalogRoutes(app: FastifyInstance): void {
   app.get('/api/catalog/my-avatars', async (req, reply) => {
     try {
       const scope = scopeOf(req)
+      const q = req.query as Record<string, string | undefined>
       const { ctx } = await loadProvider('chanjing', { tenantId: scope.tenantId })
       const { post } = await import('../providers/chanjing/client.ts')
       const data = await post<unknown>(ctx, 'chanjing', '/list_customised_person', {
-        page: 1,
-        page_size: 100,
+        page: Number(q.page ?? 1),
+        page_size: Number(q.pageSize ?? 100),
       })
       reply.send({ data })
+    } catch (err) {
+      sendError(reply, err)
+    }
+  })
+
+  /** 字幕字体。视频合成用，透传平台目录，凭据不出服务端。 */
+  app.get('/api/catalog/fonts', async (req, reply) => {
+    try {
+      const scope = scopeOf(req)
+      const { ctx } = await loadProvider('chanjing', { tenantId: scope.tenantId })
+      const { get } = await import('../providers/chanjing/client.ts')
+      const data = await get<unknown>(ctx, 'chanjing', '/font_list', {})
+      reply.send({ data })
+    } catch (err) {
+      sendError(reply, err)
+    }
+  })
+
+  /** 分类标签。素材库、数字人按标签筛选用。 */
+  app.get('/api/catalog/tags', async (req, reply) => {
+    try {
+      const scope = scopeOf(req)
+      const q = req.query as Record<string, string | undefined>
+      const { ctx } = await loadProvider('chanjing', { tenantId: scope.tenantId })
+      const { get } = await import('../providers/chanjing/client.ts')
+      const data = await get<unknown>(ctx, 'chanjing', '/tag_list', {
+        business_type: q.businessType ?? q.business_type,
+      })
+      reply.send({ data })
+    } catch (err) {
+      sendError(reply, err)
+    }
+  })
+
+  /**
+   * 删除我的音色 / 我的分身。
+   *
+   * 这两样是平台账号下的自定义资源，平台账号我方独一份、所有租户共用，
+   * 所以删除会影响全体租户——只允许内部角色操作，客户不给删。
+   */
+  app.delete('/api/catalog/my-voices/:id', async (req, reply) => {
+    try {
+      const scope = scopeOf(req)
+      if (scope.role !== 'admin') throw new HttpError(403, 'forbidden', '仅内部账号可删除共享音色')
+      const { id } = req.params as { id: string }
+      const { ctx } = await loadProvider('chanjing', { tenantId: scope.tenantId })
+      const { post } = await import('../providers/chanjing/client.ts')
+      await post<unknown>(ctx, 'chanjing', '/delete_customised_audio', { id })
+      reply.send({ ok: true })
+    } catch (err) {
+      sendError(reply, err)
+    }
+  })
+
+  app.delete('/api/catalog/my-avatars/:id', async (req, reply) => {
+    try {
+      const scope = scopeOf(req)
+      if (scope.role !== 'admin') throw new HttpError(403, 'forbidden', '仅内部账号可删除共享分身')
+      const { id } = req.params as { id: string }
+      const { ctx } = await loadProvider('chanjing', { tenantId: scope.tenantId })
+      const { post } = await import('../providers/chanjing/client.ts')
+      await post<unknown>(ctx, 'chanjing', '/delete_customised_person', { id })
+      reply.send({ ok: true })
     } catch (err) {
       sendError(reply, err)
     }
