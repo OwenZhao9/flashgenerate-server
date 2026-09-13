@@ -66,6 +66,34 @@ export async function signedGetUrl(key: string, ttlSeconds = env.s3.signedUrlTtl
   })
 }
 
+/**
+ * 下载用的签名地址。
+ *
+ * 浏览器 fetch 私有桶会被 CORS 挡（桶没开跨域），所以下载不走 fetch，
+ * 而是让签名地址自带 Content-Disposition: attachment,前端直接跳过去,
+ * 浏览器当附件下载——跳转不受 CORS 限制,也不用把文件流经服务端。
+ * 文件名含中文,按 RFC 5987 给一个 ASCII 兜底 + filename* 两份。
+ */
+export async function signedDownloadUrl(
+  key: string,
+  filename: string,
+  contentType?: string,
+  ttlSeconds = env.s3.signedUrlTtl,
+): Promise<string> {
+  const ascii = filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '')
+  const disposition = `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+  return getSignedUrl(
+    s3(),
+    new GetObjectCommand({
+      Bucket: env.s3.bucket,
+      Key: key,
+      ResponseContentDisposition: disposition,
+      ...(contentType ? { ResponseContentType: contentType } : {}),
+    }),
+    { expiresIn: ttlSeconds },
+  )
+}
+
 export async function remove(key: string): Promise<void> {
   await s3().send(new DeleteObjectCommand({ Bucket: env.s3.bucket, Key: key }))
 }

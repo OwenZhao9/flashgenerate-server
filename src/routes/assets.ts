@@ -9,7 +9,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { one, pool, query } from '../db/index.ts'
 import { HttpError, scopeOf, sendError } from '../auth/guard.ts'
-import { hasStorage, keyFor, put, signedGetUrl } from '../storage/index.ts'
+import { hasStorage, keyFor, put, signedDownloadUrl, signedGetUrl } from '../storage/index.ts'
 import { loadProvider } from '../worker/context.ts'
 
 /** 上传大小上限，跟平台的素材限制对齐 */
@@ -67,15 +67,28 @@ export function assetRoutes(app: FastifyInstance): void {
     try {
       const scope = scopeOf(req)
       const { id } = req.params as { id: string }
+      const q = req.query as Record<string, string | undefined>
 
-      const row = await one<{ storage_key: string | null; mime_type: string | null }>(
+      const row = await one<{ storage_key: string | null; mime_type: string | null; name: string }>(
         pool,
-        `SELECT storage_key, mime_type FROM assets
+        `SELECT storage_key, mime_type, name FROM assets
           WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
         [id, scope.tenantId],
       )
       if (!row) throw new HttpError(404, 'not_found', '素材不存在')
       if (!row.storage_key) throw new HttpError(409, 'no_file', '这条记录没有可下载的文件')
+
+      // download=1 时给一个带 attachment 头的地址，浏览器直接跳过去当附件存，
+      // 不用 fetch（私有桶没开 CORS，fetch 会被挡）
+      if (q.download) {
+        // 素材名多半没后缀，从存储键补一个，下载下来才带正确扩展名
+        const keyExt = row.storage_key.match(/\.([a-z0-9]+)$/i)?.[1]
+        const hasExt = /\.[a-z0-9]+$/i.test(row.name)
+        const filename = hasExt || !keyExt ? row.name || id : `${row.name || id}.${keyExt}`
+        const url = await signedDownloadUrl(row.storage_key, filename, row.mime_type ?? undefined)
+        reply.send({ url, mimeType: row.mime_type, expiresIn: 900 })
+        return
+      }
 
       const url = await signedGetUrl(row.storage_key)
       reply.send({ url, mimeType: row.mime_type, expiresIn: 900 })
