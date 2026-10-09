@@ -65,7 +65,7 @@ export function taskRoutes(app: FastifyInstance): void {
 
       const providerId = await pickProvider(body.capability, body.providerId)
 
-      const dims = priceDimensions(body.capability, body.params)
+      const dims = priceDimensions(body.capability, body.params, body.modelCode)
       const rule = await findRule(
         pool, providerId, body.capability, body.modelCode, dims.variant, dims.resolution,
       )

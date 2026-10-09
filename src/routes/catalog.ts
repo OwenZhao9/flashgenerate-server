@@ -34,6 +34,7 @@ export function catalogRoutes(app: FastifyInstance): void {
             vendor: m.vendor,
             tags: m.tags ?? [],
             fields: m.fields,
+            fixedParams: m.fixedParams ?? {},
           }))
         : []
 

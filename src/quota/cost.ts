@@ -132,6 +132,7 @@ export function round4(n: number): number {
 export function priceDimensions(
   capability: Capability,
   params: Record<string, unknown>,
+  modelCode?: string | null,
 ): { variant: string | null; resolution: string | null } {
   if (capability !== 'video') return { variant: null, resolution: null }
 
@@ -140,7 +141,13 @@ export function priceDimensions(
   if (typeof c === 'number' && (c === 480 || c === 720 || c === 1080)) resolution = `${c}P`
   else if (typeof c === 'string' && /^[24]K$/i.test(c)) resolution = c.toUpperCase()
 
-  return { variant: '文/图生视频', resolution }
+  const seedance25Variants: Record<string, string> = {
+    'seedance-2.5-t2v': '文生视频',
+    'seedance-2.5-first-last-to-video': '首尾帧生视频',
+    'seedance-2.5-r2v': '全能参考',
+  }
+
+  return { variant: seedance25Variants[modelCode ?? ''] ?? '文/图生视频', resolution }
 }
 
 export function estimateUsage(capability: Capability, params: Record<string, unknown>): Usage | undefined {

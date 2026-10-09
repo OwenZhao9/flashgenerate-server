@@ -294,7 +294,7 @@ async function finishSuccess(task: Record<string, unknown>, result: PollResult):
     const assetIds = await archiveOutputs(task, result)
     const { provider, ctx } = await loadProvider(providerId, { tenantId, taskId: id })
 
-    const dims = priceDimensions(capability, (task.params ?? {}) as Record<string, unknown>)
+    const dims = priceDimensions(capability, (task.params ?? {}) as Record<string, unknown>, modelCode)
     const rule = await findRule(pool, providerId, capability, modelCode, dims.variant, dims.resolution)
     const estimate = rule ? priceOf(rule, result.usage) : null
 

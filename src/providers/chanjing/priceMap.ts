@@ -70,6 +70,30 @@ export const CHANJING_PRICE_ALIASES: PriceAlias[] = [
 
   // 视频。目录里 item_code 是 video_generation。
   {
+    modelCode: 'seedance-2.5-t2v',
+    capability: 'video',
+    item: 'video_generation',
+    catalogModel: 'seedance 2.5',
+    variant: '文生视频',
+    confirmed: true,
+  },
+  {
+    modelCode: 'seedance-2.5-first-last-to-video',
+    capability: 'video',
+    item: 'video_generation',
+    catalogModel: 'seedance 2.5',
+    variant: '首尾帧生视频',
+    confirmed: true,
+  },
+  {
+    modelCode: 'seedance-2.5-r2v',
+    capability: 'video',
+    item: 'video_generation',
+    catalogModel: 'seedance 2.5',
+    variant: '全能参考',
+    confirmed: true,
+  },
+  {
     modelCode: 'tx_kling-v3-0-text2video',
     capability: 'video',
     item: 'video_generation',

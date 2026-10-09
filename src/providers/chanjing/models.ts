@@ -35,6 +35,10 @@ type Field =
       maxSizeMB?: number
       /** 提交时的取值形状，各模型对参考素材的要求不同 */
       emit?: 'urls' | 'url' | 'resources'
+      /** 多个素材选择器可以合并提交到同一个供应商字段 */
+      submitKey?: string
+      /** 同组字段至少填写一个，例如全能参考的图片 / 视频 / 音频 */
+      requiredGroup?: string
       hint?: Text
     }
 
@@ -110,6 +114,8 @@ interface Spec {
   vendor: Text
   tags?: Text[]
   fields: Field[]
+  /** 不需要用户选择、但供应商要求每次都提交的固定参数 */
+  fixedParams?: Record<string, string | number | boolean>
 }
 
 const SPECS: Spec[] = [
@@ -146,6 +152,103 @@ const SPECS: Spec[] = [
   },
 
   // 视频
+  {
+    code: 'seedance-2.5-t2v',
+    capability: 'video',
+    label: t('Seedance 2.5（文生视频）', 'Seedance 2.5 (Text to Video)'),
+    vendor: t('豆包', 'Doubao'),
+    tags: [t('新', 'New')],
+    fixedParams: { number_of_images: 1 },
+    fields: [
+      prompt(t('描述画面与运镜，例如：海面日出，海浪缓慢起伏，镜头平稳向前推进', 'Describe the shot and camera move, e.g. sunrise over the sea, gentle waves, steady push forward')),
+      { key: 'aspect_ratio', type: 'select', label: t('画幅', 'Aspect ratio'), required: true, options: SEEDANCE_RATIOS, default: '16:9' },
+      { key: 'clarity', type: 'select', label: t('清晰度', 'Resolution'), required: true, options: [480, 720, 1080], default: 720 },
+      { key: 'video_duration', type: 'number', label: t('时长（秒）', 'Duration (s)'), required: true, min: 4, max: 30, default: 5 },
+    ],
+  },
+  {
+    code: 'seedance-2.5-first-last-to-video',
+    capability: 'video',
+    label: t('Seedance 2.5（首尾帧生视频）', 'Seedance 2.5 (First / Last Frame to Video)'),
+    vendor: t('豆包', 'Doubao'),
+    tags: [t('新', 'New')],
+    fixedParams: { number_of_images: 1 },
+    fields: [
+      {
+        key: 'start_frame',
+        type: 'asset',
+        label: t('首帧图', 'First frame'),
+        assetType: 'image',
+        required: true,
+        max: 1,
+        maxSizeMB: 30,
+        emit: 'url',
+      },
+      {
+        key: 'end_frame',
+        type: 'asset',
+        label: t('尾帧图', 'Last frame'),
+        assetType: 'image',
+        max: 1,
+        maxSizeMB: 30,
+        emit: 'url',
+        hint: t('可选，配合首帧做自然过渡', 'Optional — pairs with the first frame for a natural transition'),
+      },
+      prompt(t('描述从首帧到尾帧的动作与运镜', 'Describe the motion and camera move from the first frame to the last')),
+      { key: 'aspect_ratio', type: 'select', label: t('画幅', 'Aspect ratio'), required: true, options: ['auto', ...SEEDANCE_RATIOS], default: 'auto' },
+      { key: 'clarity', type: 'select', label: t('清晰度', 'Resolution'), required: true, options: [480, 720, 1080], default: 720 },
+      { key: 'video_duration', type: 'number', label: t('时长（秒）', 'Duration (s)'), required: true, min: 4, max: 30, default: 5 },
+    ],
+  },
+  {
+    code: 'seedance-2.5-r2v',
+    capability: 'video',
+    label: t('Seedance 2.5（全能参考）', 'Seedance 2.5 (All-round Reference)'),
+    vendor: t('豆包', 'Doubao'),
+    tags: [t('新', 'New'), t('多模态参考', 'Multimodal reference')],
+    fixedParams: { number_of_images: 1 },
+    fields: [
+      prompt(t('描述画面，并说明如何参考所选素材', 'Describe the shot and how the selected references should be used')),
+      {
+        key: '_reference_images',
+        type: 'asset',
+        label: t('参考图片', 'Reference images'),
+        assetType: 'image',
+        max: 30,
+        maxSizeMB: 30,
+        emit: 'resources',
+        submitKey: 'ref_resources',
+        requiredGroup: 'references',
+      },
+      {
+        key: '_reference_videos',
+        type: 'asset',
+        label: t('参考视频', 'Reference videos'),
+        assetType: 'video',
+        max: 10,
+        maxSizeMB: 50,
+        emit: 'resources',
+        submitKey: 'ref_resources',
+        requiredGroup: 'references',
+        hint: t('最多 10 个，累计不超过 30 秒', 'Up to 10 videos, 30 seconds total'),
+      },
+      {
+        key: '_reference_audio',
+        type: 'asset',
+        label: t('参考音频', 'Reference audio'),
+        assetType: 'audio',
+        max: 10,
+        maxSizeMB: 15,
+        emit: 'resources',
+        submitKey: 'ref_resources',
+        requiredGroup: 'references',
+        hint: t('最多 10 个，累计不超过 30 秒', 'Up to 10 audio files, 30 seconds total'),
+      },
+      { key: 'aspect_ratio', type: 'select', label: t('画幅', 'Aspect ratio'), required: true, options: ['auto', ...SEEDANCE_RATIOS], default: 'auto' },
+      { key: 'clarity', type: 'select', label: t('清晰度', 'Resolution'), required: true, options: [480, 720, 1080], default: 720 },
+      { key: 'video_duration', type: 'number', label: t('时长（秒）', 'Duration (s)'), required: true, min: 4, max: 30, default: 5 },
+    ],
+  },
   {
     code: 'seedance-2.0-lite-wetoken',
     capability: 'video',

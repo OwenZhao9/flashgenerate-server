@@ -16,7 +16,7 @@ async function it(name: string, fn: () => Promise<void>) {
 
 /** 走一遍真实路径：参数 → 维度 → 查价 → 算钱 */
 async function quote(capability: Capability, modelCode: string | null, params: Record<string, unknown>, usageAmount?: number) {
-  const d = priceDimensions(capability, params)
+  const d = priceDimensions(capability, params, modelCode)
   const rule = await findRule(pool, 'chanjing', capability, modelCode, d.variant, d.resolution)
   assert.ok(rule, `找不到规则：${capability}/${modelCode}`)
   const usage = usageAmount !== undefined
@@ -47,6 +47,12 @@ await it('视频按秒累计，一条 10 秒 1080P 的 Kling3.0 是 350', async 
   const r = await quote('video', 'tx_kling-v3-0-text2video', { clarity: 1080, video_duration: 10 }, 10)
   assert.equal(r.charge.points, 350, `实际 ${r.charge.points}`)
   assert.equal(r.charge.providerAmount, 350)
+})
+
+await it('Seedance 2.5 三种模式分别使用官方价格分类', async () => {
+  assert.equal(priceDimensions('video', { clarity: 720 }, 'seedance-2.5-t2v').variant, '文生视频')
+  assert.equal(priceDimensions('video', { clarity: 720 }, 'seedance-2.5-first-last-to-video').variant, '首尾帧生视频')
+  assert.equal(priceDimensions('video', { clarity: 720 }, 'seedance-2.5-r2v').variant, '全能参考')
 })
 
 await it('分辨率认不出来时退到该模型最贵的一档，不会少算', async () => {
