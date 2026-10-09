@@ -72,6 +72,16 @@ const AIGC_PROGRESS: Record<string, number> = {
 }
 
 /**
+ * AI 创作偶尔会先把图片地址写进结果，再把 progress_desc 从中间态刷新成 Success。
+ * 也见过已经有可下载结果时 progress_desc 仍停在 Error。对用户来说，能拿到结果文件
+ * 才是最可靠的完成证据，不能让一个滞后的文字状态把真实成功覆盖成失败。
+ */
+export function fromAigcStatus(desc: string | undefined, outputCount: number): TaskStatus {
+  if (outputCount > 0) return 'success'
+  return AIGC_STATUS[desc ?? 'Generating'] ?? 'running'
+}
+
+/**
  * 口型驱动的状态码跟视频合成不是同一套：这里 20 是成功，视频合成那边是 30。
  * 拿视频合成那套去判，成功的任务会一直卡在「进行中」，进度显示 100% 却永远不结束。
  * 也没有 queue_status 字段。
@@ -207,8 +217,12 @@ async function pollFor(
         unique_id: providerTaskId,
       })
       const desc = str(d?.progress_desc) ?? 'Generating'
-      const status = AIGC_STATUS[desc] ?? 'running'
-      const urls = Array.isArray(d?.output_url) ? (d.output_url as unknown[]).filter((u): u is string => typeof u === 'string' && !!u) : []
+      const urls = Array.isArray(d?.output_url)
+        ? (d.output_url as unknown[]).filter((u): u is string => typeof u === 'string' && !!u)
+        : str(d?.output_url)
+          ? [str(d.output_url)!]
+          : []
+      const status = fromAigcStatus(desc, urls.length)
       const isVideo = capability === 'video'
       const motion = (d?.motion_info ?? {}) as Record<string, unknown>
 

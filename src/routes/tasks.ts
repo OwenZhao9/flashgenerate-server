@@ -25,6 +25,10 @@ const submitBody = z.object({
   providerId: z.string().max(60).optional(),
 })
 
+const editBody = z.object({
+  name: z.string().trim().min(1, '名称不能为空').max(200),
+})
+
 /** 选一家能干这活的供应商。目前只接了一家，以后要分流就改这里。 */
 async function pickProvider(capability: Capability, prefer?: string): Promise<string> {
   const candidates = providersFor(capability).map((p) => p.id)
@@ -181,6 +185,60 @@ export function taskRoutes(app: FastifyInstance): void {
       )
       if (!row) throw new HttpError(404, 'not_found', '任务不存在')
       reply.send({ task: shape(row) })
+    } catch (err) {
+      sendError(reply, err)
+    }
+  })
+
+  /** 历史记录只允许改展示名称，不改提交参数和结算数据。 */
+  app.patch('/api/tasks/:id', async (req, reply) => {
+    try {
+      const scope = scopeOf(req)
+      const { id } = req.params as { id: string }
+      const body = editBody.parse(req.body)
+      const row = await one(
+        pool,
+        `UPDATE tasks SET name = $3, updated_at = now()
+          WHERE id = $1 AND tenant_id = $2
+          RETURNING id, name, updated_at`,
+        [id, scope.tenantId, body.name],
+      )
+      if (!row) throw new HttpError(404, 'not_found', '任务不存在')
+      reply.send({ task: row })
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return sendError(reply, new HttpError(400, 'bad_request', err.errors[0]?.message ?? '名称不正确'))
+      }
+      sendError(reply, err)
+    }
+  })
+
+  /**
+   * 删除的是历史记录，不删除已经生成并保存到资料库的文件。
+   * assets.task_id 的外键会自动置空，额度账本和调用日志仍保留，方便后续对账排查。
+   */
+  app.delete('/api/tasks/:id', async (req, reply) => {
+    try {
+      const scope = scopeOf(req)
+      const { id } = req.params as { id: string }
+      const rows = await query(
+        pool,
+        `DELETE FROM tasks
+          WHERE id = $1 AND tenant_id = $2
+            AND status IN ('success','failed','fatal','cancelled')
+          RETURNING id`,
+        [id, scope.tenantId],
+      )
+      if (!rows.length) {
+        const exists = await one<{ status: string }>(
+          pool,
+          `SELECT status FROM tasks WHERE id = $1 AND tenant_id = $2`,
+          [id, scope.tenantId],
+        )
+        if (!exists) throw new HttpError(404, 'not_found', '任务不存在')
+        throw new HttpError(409, 'task_active', '任务仍在进行，结束后才能删除记录')
+      }
+      reply.send({ ok: true })
     } catch (err) {
       sendError(reply, err)
     }
