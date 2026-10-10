@@ -66,11 +66,15 @@ export function catalogRoutes(app: FastifyInstance): void {
     try {
       const scope = scopeOf(req)
       const q = req.query as Record<string, string | undefined>
+      // 平台对定制资源列表的 page_size 上限是 50。传 100 不会截断，
+      // 而是直接回「参数错误」，导致我的音色、语音合成和数字人配音都拿不到克隆音色。
+      const page = Math.max(1, Number(q.page) || 1)
+      const pageSize = Math.min(50, Math.max(1, Number(q.pageSize) || 50))
       const { ctx } = await loadProvider('chanjing', { tenantId: scope.tenantId })
       const { post } = await import('../providers/chanjing/client.ts')
       const data = await post<unknown>(ctx, 'chanjing', '/list_customised_audio', {
-        page: Number(q.page ?? 1),
-        page_size: Number(q.pageSize ?? 100),
+        page,
+        page_size: pageSize,
       })
       reply.send({ data })
     } catch (err) {
@@ -102,11 +106,13 @@ export function catalogRoutes(app: FastifyInstance): void {
     try {
       const scope = scopeOf(req)
       const q = req.query as Record<string, string | undefined>
+      const page = Math.max(1, Number(q.page) || 1)
+      const pageSize = Math.min(50, Math.max(1, Number(q.pageSize) || 50))
       const { ctx } = await loadProvider('chanjing', { tenantId: scope.tenantId })
       const { post } = await import('../providers/chanjing/client.ts')
       const data = await post<unknown>(ctx, 'chanjing', '/list_customised_person', {
-        page: Number(q.page ?? 1),
-        page_size: Number(q.pageSize ?? 100),
+        page,
+        page_size: pageSize,
       })
       reply.send({ data })
     } catch (err) {
